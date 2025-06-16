@@ -1,0 +1,803 @@
+// API Endpoints for CTX Configuration Approval System
+// Using Express.js with MongoDB/Mongoose
+
+const express = require('express');
+const router = express.Router();
+const { 
+  WorkOrder, 
+  LayoutTemplate, 
+  UserLayoutPreference, 
+  Region,
+  User,
+  Metrics,
+  ActivityLog
+} = require('../models');
+
+// Authentication middleware (placeholder)
+const authenticate = (req, res, next) => {
+  // Authentication logic would go here
+  // For simplicity, we're passing through
+  next();
+};
+
+// Authorization middleware (placeholder)
+const authorize = (roles) => {
+  return (req, res, next) => {
+    // Authorization logic based on user roles would go here
+    // For simplicity, we're passing through
+    next();
+  };
+};
+
+// ===== Work Order Endpoints =====
+
+// Get all work orders with filtering
+router.get('/workorders', authenticate, async (req, res) => {
+  try {
+    const { 
+      region, 
+      status, 
+      startDate, 
+      endDate, 
+      search,
+      sortBy,
+      sortOrder,
+      page = 1,
+      limit = 10
+    } = req.query;
+    
+    // Build filter object
+    const filter = {};
+    
+    if (region) filter.regionId = region;
+    if (status) filter.workOrderStatus = status;
+    
+    // Date range filter
+    if (startDate || endDate) {
+      filter.sftpFetchTimestamp = {};
+      if (startDate) filter.sftpFetchTimestamp.$gte = new Date(startDate);
+      if (endDate) filter.sftpFetchTimestamp.$lte = new Date(endDate);
+    }
+    
+    // Search across multiple fields
+    if (search) {
+      filter.$or = [
+        { workOrderNumber: isNaN(parseInt(search)) ? null : parseInt(search) },
+        { enbID: isNaN(parseInt(search)) ? null : parseInt(search) },
+        { serviceImpacting: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { comment: { $regex: search, $options: 'i' } },
+        { 'workItems.name': { $regex: search, $options: 'i' } },
+        { 'workItems.comment': { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    // Sorting
+    const sort = {};
+    if (sortBy) {
+      sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    } else {
+      sort.workOrderNumber = -1; // Default sort by work order number descending
+    }
+    
+    // Pagination
+    const skip = (page - 1) * limit;
+    
+    // Execute query with pagination
+    const workOrders = await WorkOrder.find(filter)
+      .sort(sort)
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Get total count for pagination
+    const total = await WorkOrder.countDocuments(filter);
+    
+    res.json({
+      workOrders,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get a single work order by ID
+router.get('/workorders/:id', authenticate, async (req, res) => {
+  try {
+    const workOrder = await WorkOrder.findById(req.params.id);
+    if (!workOrder) {
+      return res.status(404).json({ error: 'Work order not found' });
+    }
+    res.json(workOrder);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a new work order
+router.post('/workorders', authenticate, authorize(['Admin', 'Operator']), async (req, res) => {
+  try {
+    const newWorkOrder = new WorkOrder(req.body);
+    await newWorkOrder.save();
+    
+    // Log the activity
+    const activityLog = new ActivityLog({
+      userId: req.user._id, // from auth middleware
+      action: 'WorkOrderCreated',
+      workOrderId: newWorkOrder._id,
+      workOrderNumber: newWorkOrder.workOrderNumber,
+      timestamp: new Date()
+    });
+    await activityLog.save();
+    
+    res.status(201).json(newWorkOrder);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update a work order
+router.put('/workorders/:id', authenticate, authorize(['Admin', 'SPE', 'Operator']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get original work order to compare changes
+    const originalWorkOrder = await WorkOrder.findById(id);
+    if (!originalWorkOrder) {
+      return res.status(404).json({ error: 'Work order not found' });
+    }
+    
+    // Update the work order
+    const updatedWorkOrder = await WorkOrder.findByIdAndUpdate(
+      id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+    
+    // Log status change if it happened
+    if (originalWorkOrder.workOrderStatus !== updatedWorkOrder.workOrderStatus) {
+      const activityLog = new ActivityLog({
+        userId: req.user._id, // from auth middleware
+        action: 'StatusChanged',
+        workOrderId: updatedWorkOrder._id,
+        workOrderNumber: updatedWorkOrder.workOrderNumber,
+        previousStatus: originalWorkOrder.workOrderStatus,
+        newStatus: updatedWorkOrder.workOrderStatus,
+        comment: updatedWorkOrder.comment,
+        timestamp: new Date()
+      });
+      await activityLog.save();
+    }
+    
+    res.json(updatedWorkOrder);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Approve/Deny a specific algorithm in a work order
+router.patch('/workorders/:id/algorithms/:algorithmId', authenticate, authorize(['SPE']), async (req, res) => {
+  try {
+    const { id, algorithmId } = req.params;
+    const { status, comment } = req.body;
+    
+    if (!['Approved', 'Denied'].includes(status)) {
+      return res.status(400).json({ error: 'Status must be either Approved or Denied' });
+    }
+    
+    // Find the work order
+    const workOrder = await WorkOrder.findById(id);
+    if (!workOrder) {
+      return res.status(404).json({ error: 'Work order not found' });
+    }
+    
+    // Find the algorithm within the work order
+    const algorithm = workOrder.workItems.id(algorithmId);
+    if (!algorithm) {
+      return res.status(404).json({ error: 'Algorithm not found in work order' });
+    }
+    
+    // Save previous status for logging
+    const previousStatus = algorithm.status;
+    
+    // Update the algorithm
+    algorithm.status = status;
+    algorithm.spe = req.user.displayName; // from auth middleware
+    algorithm.speDate = new Date();
+    if (comment) algorithm.comment = comment;
+    
+    // Check if all algorithms are processed
+    let allProcessed = workOrder.workItems.every(item => item.spe);
+    let allDenied = workOrder.workItems.every(item => item.status === 'Denied');
+    let hasApproved = workOrder.workItems.some(item => item.status === 'Approved');
+    
+    // Update work order status based on algorithm statuses
+    if (allProcessed) {
+      if (allDenied) {
+        workOrder.workOrderStatus = 'N/A';
+        workOrder.description = 'All algorithms denied by SPE';
+      } else if (hasApproved) {
+        workOrder.workOrderStatus = 'Success';
+        workOrder.description = 'WO Executed successfully';
+      }
+    }
+    
+    // Save the updated work order
+    await workOrder.save();
+    
+    // Log the activity
+    const action = status === 'Approved' ? 'AlgorithmApproved' : 'AlgorithmDenied';
+    const activityLog = new ActivityLog({
+      userId: req.user._id, // from auth middleware
+      action,
+      workOrderId: workOrder._id,
+      workOrderNumber: workOrder.workOrderNumber,
+      algorithmId: algorithm._id,
+      algorithmName: algorithm.name,
+      previousStatus,
+      newStatus: status,
+      comment: algorithm.comment,
+      timestamp: new Date()
+    });
+    await activityLog.save();
+    
+    res.json(workOrder);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Bulk approve/deny algorithms
+router.post('/workorders/bulk-action', authenticate, authorize(['SPE']), async (req, res) => {
+  try {
+    const { action, items } = req.body;
+    
+    if (!['approve', 'deny'].includes(action)) {
+      return res.status(400).json({ error: 'Action must be either approve or deny' });
+    }
+    
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Items must be a non-empty array' });
+    }
+    
+    const status = action === 'approve' ? 'Approved' : 'Denied';
+    const results = [];
+    
+    // Process each item in the bulk action
+    for (const item of items) {
+      const { workOrderId, algorithmIds } = item;
+      
+      // Find the work order
+      const workOrder = await WorkOrder.findById(workOrderId);
+      if (!workOrder) {
+        results.push({ workOrderId, error: 'Work order not found' });
+        continue;
+      }
+      
+      // Update each algorithm
+      for (const algorithmId of algorithmIds) {
+        const algorithm = workOrder.workItems.id(algorithmId);
+        if (!algorithm) continue;
+        
+        // Save previous status for logging
+        const previousStatus = algorithm.status;
+        
+        // Update the algorithm
+        algorithm.status = status;
+        algorithm.spe = req.user.displayName; // from auth middleware
+        algorithm.speDate = new Date();
+        
+        // Log the activity
+        const action = status === 'Approved' ? 'AlgorithmApproved' : 'AlgorithmDenied';
+        const activityLog = new ActivityLog({
+          userId: req.user._id, // from auth middleware
+          action,
+          workOrderId: workOrder._id,
+          workOrderNumber: workOrder.workOrderNumber,
+          algorithmId: algorithm._id,
+          algorithmName: algorithm.name,
+          previousStatus,
+          newStatus: status,
+          timestamp: new Date()
+        });
+        await activityLog.save();
+      }
+      
+      // Check if all algorithms are processed
+      let allProcessed = workOrder.workItems.every(item => item.spe);
+      let allDenied = workOrder.workItems.every(item => item.status === 'Denied');
+      let hasApproved = workOrder.workItems.some(item => item.status === 'Approved');
+      
+      // Update work order status based on algorithm statuses
+      if (allProcessed) {
+        if (allDenied) {
+          workOrder.workOrderStatus = 'N/A';
+          workOrder.description = 'All algorithms denied by SPE';
+        } else if (hasApproved) {
+          workOrder.workOrderStatus = 'Success';
+          workOrder.description = 'WO Executed successfully';
+        }
+      }
+      
+      // Save the updated work order
+      await workOrder.save();
+      
+      results.push({ workOrderId, success: true });
+    }
+    
+    res.json({ results });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update a work order comment
+router.patch('/workorders/:id/comment', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { comment } = req.body;
+    
+    const workOrder = await WorkOrder.findById(id);
+    if (!workOrder) {
+      return res.status(404).json({ error: 'Work order not found' });
+    }
+    
+    workOrder.comment = comment;
+    await workOrder.save();
+    
+    // Log comment activity
+    const activityLog = new ActivityLog({
+      userId: req.user._id, // from auth middleware
+      action: 'CommentAdded',
+      workOrderId: workOrder._id,
+      workOrderNumber: workOrder.workOrderNumber,
+      comment,
+      timestamp: new Date()
+    });
+    await activityLog.save();
+    
+    res.json(workOrder);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update an algorithm comment
+router.patch('/workorders/:id/algorithms/:algorithmId/comment', authenticate, async (req, res) => {
+  try {
+    const { id, algorithmId } = req.params;
+    const { comment } = req.body;
+    
+    const workOrder = await WorkOrder.findById(id);
+    if (!workOrder) {
+      return res.status(404).json({ error: 'Work order not found' });
+    }
+    
+    const algorithm = workOrder.workItems.id(algorithmId);
+    if (!algorithm) {
+      return res.status(404).json({ error: 'Algorithm not found in work order' });
+    }
+    
+    algorithm.comment = comment;
+    await workOrder.save();
+    
+    // Log comment activity
+    const activityLog = new ActivityLog({
+      userId: req.user._id, // from auth middleware
+      action: 'CommentAdded',
+      workOrderId: workOrder._id,
+      workOrderNumber: workOrder.workOrderNumber,
+      algorithmId: algorithm._id,
+      algorithmName: algorithm.name,
+      comment,
+      timestamp: new Date()
+    });
+    await activityLog.save();
+    
+    res.json(workOrder);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ===== Layout Template Endpoints =====
+
+// Get all layout templates
+router.get('/layout-templates', authenticate, async (req, res) => {
+  try {
+    const templates = await LayoutTemplate.find();
+    res.json(templates);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a new layout template
+router.post('/layout-templates', authenticate, async (req, res) => {
+  try {
+    const newTemplate = new LayoutTemplate(req.body);
+    await newTemplate.save();
+    res.status(201).json(newTemplate);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Get user's layout preferences
+router.get('/user-layout-preferences', authenticate, async (req, res) => {
+  try {
+    const { regionId } = req.query;
+    
+    if (!regionId) {
+      return res.status(400).json({ error: 'Region ID is required' });
+    }
+    
+    const preferences = await UserLayoutPreference.findOne({
+      userId: req.user._id, // from auth middleware
+      regionId
+    });
+    
+    if (!preferences) {
+      // Return default layout if no preferences exist
+      const defaultLayout = await LayoutTemplate.findOne({ name: 'Default' });
+      return res.json({
+        userId: req.user._id,
+        regionId,
+        currentLayoutId: defaultLayout._id,
+        customColumns: defaultLayout.columns
+      });
+    }
+    
+    res.json(preferences);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save user's layout preferences
+router.post('/user-layout-preferences', authenticate, async (req, res) => {
+  try {
+    const { regionId, currentLayoutId, customColumns } = req.body;
+    
+    if (!regionId || !currentLayoutId) {
+      return res.status(400).json({ error: 'Region ID and current layout ID are required' });
+    }
+    
+    // Update or create preferences
+    const preferences = await UserLayoutPreference.findOneAndUpdate(
+      { userId: req.user._id, regionId },
+      { currentLayoutId, customColumns },
+      { new: true, upsert: true, runValidators: true }
+    );
+    
+    res.json(preferences);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ===== Region Endpoints =====
+
+// Get all regions
+router.get('/regions', authenticate, async (req, res) => {
+  try {
+    const regions = await Region.find({ isActive: true });
+    res.json(regions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== Metrics Endpoints =====
+
+// Get metrics for a specific period
+router.get('/metrics', authenticate, async (req, res) => {
+  try {
+    const { 
+      regionId, 
+      startDate, 
+      endDate,
+      timeRange // 'all', 'today', 'yesterday', 'thisWeek', 'lastWeek', 'thisMonth', 'lastMonth'
+    } = req.query;
+    
+    if (!regionId) {
+      return res.status(400).json({ error: 'Region ID is required' });
+    }
+    
+    // Calculate date range based on timeRange
+    let dateFilter = {};
+    
+    if (timeRange) {
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      // Helper function to get Monday of the week
+      const getMonday = (d) => {
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        return new Date(d.setDate(diff));
+      };
+      
+      switch(timeRange) {
+        case 'today':
+          dateFilter = { date: { $gte: today, $lt: now } };
+          break;
+        case 'yesterday':
+          const yesterday = new Date(today);
+          yesterday.setDate(yesterday.getDate() - 1);
+          dateFilter = { date: { $gte: yesterday, $lt: today } };
+          break;
+        case 'thisWeek':
+          const thisWeekStart = getMonday(new Date(today));
+          dateFilter = { date: { $gte: thisWeekStart, $lt: now } };
+          break;
+        case 'lastWeek':
+          const lastWeekStart = getMonday(new Date(today));
+          lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+          const lastWeekEnd = new Date(getMonday(new Date(today)));
+          lastWeekEnd.setDate(lastWeekEnd.getDate() - 1);
+          dateFilter = { date: { $gte: lastWeekStart, $lte: lastWeekEnd } };
+          break;
+        case 'thisMonth':
+          const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+          dateFilter = { date: { $gte: thisMonthStart, $lt: now } };
+          break;
+        case 'lastMonth':
+          const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+          dateFilter = { date: { $gte: lastMonthStart, $lte: lastMonthEnd } };
+          break;
+        // 'all' or default: no date filter
+      }
+    } else if (startDate || endDate) {
+      dateFilter = { date: {} };
+      if (startDate) dateFilter.date.$gte = new Date(startDate);
+      if (endDate) dateFilter.date.$lte = new Date(endDate);
+    }
+    
+    // Combine region and date filters
+    const filter = { regionId, ...dateFilter };
+    
+    // Fetch metrics data
+    const metricsData = await Metrics.find(filter).sort({ date: 1 });
+    
+    // Calculate summary stats
+    const summary = metricsData.reduce((acc, metric) => {
+      acc.totalWorkOrders += metric.totalWorkOrders;
+      acc.pendingWorkOrders += metric.pendingWorkOrders;
+      acc.approvedWorkOrders += metric.approvedWorkOrders;
+      acc.rejectedWorkOrders += metric.rejectedWorkOrders;
+      acc.totalAlgorithms += metric.totalAlgorithms;
+      acc.approvedAlgorithms += metric.approvedAlgorithms;
+      acc.deniedAlgorithms += metric.deniedAlgorithms;
+      
+      // For avg calculation
+      acc.executionTimeSum += metric.avgExecutionTime * metric.approvedWorkOrders;
+      acc.executionTimeCount += metric.approvedWorkOrders;
+      
+      return acc;
+    }, {
+      totalWorkOrders: 0,
+      pendingWorkOrders: 0,
+      approvedWorkOrders: 0,
+      rejectedWorkOrders: 0,
+      totalAlgorithms: 0,
+      approvedAlgorithms: 0,
+      deniedAlgorithms: 0,
+      executionTimeSum: 0,
+      executionTimeCount: 0
+    });
+    
+    // Calculate aggregate averages and success rate
+    summary.avgExecutionTime = summary.executionTimeCount > 0 
+      ? summary.executionTimeSum / summary.executionTimeCount 
+      : 0;
+    
+    const completedOrders = summary.approvedWorkOrders + summary.rejectedWorkOrders;
+    summary.successRate = completedOrders > 0 
+      ? (summary.approvedWorkOrders / completedOrders) * 100 
+      : 0;
+    
+    // Format avgExecutionTime from seconds to mm:ss
+    const minutes = Math.floor(summary.avgExecutionTime / 60);
+    const seconds = Math.floor(summary.avgExecutionTime % 60);
+    summary.avgExecutionTimeFormatted = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    
+    // Clean up the summary object
+    delete summary.executionTimeSum;
+    delete summary.executionTimeCount;
+    
+    // Get recent activity (last 5 work orders or algorithms updated)
+    const recentActivity = await ActivityLog.find({
+      regionId,
+      $or: [
+        { action: 'WorkOrderUpdated' },
+        { action: 'AlgorithmApproved' },
+        { action: 'AlgorithmDenied' },
+        { action: 'StatusChanged' }
+      ]
+    })
+    .sort({ timestamp: -1 })
+    .limit(5)
+    .populate('userId', 'displayName')
+    .lean();
+    
+    res.json({
+      metrics: metricsData,
+      summary,
+      recentActivity
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== Utilities =====
+
+// Get algorithm CSV data (sample data generator)
+router.get('/algorithm-csv/:workOrderNumber/:algorithmName', authenticate, async (req, res) => {
+  try {
+    const { workOrderNumber, algorithmName } = req.params;
+    
+    // Find the corresponding work order and algorithm
+    const workOrder = await WorkOrder.findOne({ 
+      workOrderNumber: parseInt(workOrderNumber) 
+    });
+    
+    if (!workOrder) {
+      return res.status(404).json({ error: 'Work order not found' });
+    }
+    
+    const algorithm = workOrder.workItems.find(item => 
+      item.name === algorithmName
+    );
+    
+    if (!algorithm) {
+      return res.status(404).json({ error: 'Algorithm not found in work order' });
+    }
+    
+    // Generate CSV header
+    let csv = "timestamp,metric_name,value,status,notes\n";
+    
+    // Generate random sample data rows
+    const now = new Date();
+    const generateTimestamp = (minutesAgo) => {
+      const date = new Date(now.getTime() - minutesAgo * 60000);
+      return date.toISOString();
+    };
+    
+    // Add rows based on algorithm status
+    const rows = [
+      `${generateTimestamp(30)},cpu_usage,${Math.round(Math.random() * 90 + 10)},normal,"${algorithmName} baseline measurement"`,
+      `${generateTimestamp(25)},memory_usage,${Math.round(Math.random() * 80 + 20)},normal,"Runtime allocation"`,
+      `${generateTimestamp(20)},execution_time,${Math.round(Math.random() * 120 + 30)},normal,"Processing duration in ms"`,
+      `${generateTimestamp(15)},success_rate,${Math.round(Math.random() * 99 + 1)},${Math.random() > 0.8 ? 'warning' : 'normal'},"Percentage of successful operations"`,
+      `${generateTimestamp(10)},error_count,${Math.round(Math.random() * 5)},${Math.random() > 0.7 ? 'warning' : 'normal'},"Number of errors encountered"`,
+    ];
+    
+    // Add algorithm status and comments if available
+    if (algorithm.status) {
+      rows.push(`${generateTimestamp(5)},approval_status,${algorithm.status === 'Approved' ? 100 : 0},${algorithm.status === 'Approved' ? 'normal' : 'critical'},"${algorithm.status} by ${algorithm.spe || 'system'}"`);
+    }
+    
+    if (algorithm.comment) {
+      rows.push(`${generateTimestamp(2)},notes,0,info,"${algorithm.comment.replace(/"/g, '""')}"`);
+    }
+    
+    csv += rows.join('\n');
+    
+    // Set CSV headers and send response
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="WO-${workOrderNumber}-${algorithmName}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Export CSV of work orders
+router.get('/export-csv', authenticate, async (req, res) => {
+  try {
+    const {
+      region,
+      timeRange,
+      startDate,
+      endDate,
+      columns
+    } = req.query;
+    
+    if (!region) {
+      return res.status(400).json({ error: 'Region ID is required' });
+    }
+    
+    // Parse columns to include in export
+    const columnsToExport = columns ? JSON.parse(columns) : [
+      'workOrderNumber', 
+      'enbID', 
+      'serviceImpacting', 
+      'sftpFetchTimestamp', 
+      'startTime', 
+      'endTime', 
+      'workOrderStatus', 
+      'description', 
+      'comment'
+    ];
+    
+    // Calculate date range based on timeRange
+    let dateFilter = {};
+    if (timeRange && timeRange !== 'all') {
+      // Same date range logic as in metrics endpoint
+      // ...
+    } else if (startDate || endDate) {
+      dateFilter = { sftpFetchTimestamp: {} };
+      if (startDate) dateFilter.sftpFetchTimestamp.$gte = new Date(startDate);
+      if (endDate) dateFilter.sftpFetchTimestamp.$lte = new Date(endDate);
+    }
+    
+    // Fetch work orders
+    const workOrders = await WorkOrder.find({ 
+      regionId: region, 
+      ...dateFilter 
+    }).sort({ workOrderNumber: -1 });
+    
+    // Generate CSV header
+    const columnNames = columnsToExport.map(col => {
+      switch(col) {
+        case 'workOrderNumber': return 'Work Order #';
+        case 'enbID': return 'Enb ID';
+        case 'serviceImpacting': return 'Service Impacting';
+        case 'sftpFetchTimestamp': return 'SFTP Fetch Timestamp';
+        case 'workItems': return 'Algorithms';
+        case 'startTime': return 'Start Time';
+        case 'endTime': return 'End Time';
+        case 'workOrderStatus': return 'Status';
+        case 'description': return 'Description';
+        case 'comment': return 'Comment';
+        default: return col;
+      }
+    });
+    
+    let csv = columnNames.join(',') + '\n';
+    
+    // Format timestamps
+    const formatDate = (dateStr) => {
+      if (!dateStr) return '';
+      return new Date(dateStr).toLocaleString();
+    };
+    
+    // Generate CSV rows
+    workOrders.forEach(workOrder => {
+      const row = columnsToExport.map(col => {
+        if (col === 'workItems') {
+          return `"${workOrder.workItems.map(item => item.name).join(', ')}"`;
+        }
+        if (col === 'sftpFetchTimestamp' || col === 'startTime' || col === 'endTime') {
+          return `"${formatDate(workOrder[col])}"`;
+        }
+        let value = workOrder[col] !== undefined ? workOrder[col] : '';
+        if (typeof value === 'string' && value.includes(',')) {
+          value = `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+      });
+      
+      csv += row.join(',') + '\n';
+    });
+    
+    // Set CSV headers and send response
+    const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="ctx-work-orders-${dateStr}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;

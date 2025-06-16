@@ -1,0 +1,299 @@
+// MongoDB Schema using Mongoose for CTX Configuration Approval System
+
+const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
+
+// WorkItem (Algorithm) Schema
+const WorkItemSchema = new Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  comment: {
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: 200
+  },
+  spe: {
+    type: String,
+    default: '',
+    trim: true
+  },
+  speDate: {
+    type: Date,
+    default: null
+  },
+  status: {
+    type: String,
+    enum: ['Approved', 'Denied', ''],
+    default: ''
+  }
+}, { timestamps: true });
+
+// Work Order Schema
+const WorkOrderSchema = new Schema({
+  workOrderNumber: {
+    type: Number,
+    required: true,
+    unique: true,
+    index: true
+  },
+  enbID: {
+    type: Number,
+    required: true
+  },
+  serviceImpacting: {
+    type: String,
+    enum: ['Yes', 'No'],
+    required: true
+  },
+  sftpFetchTimestamp: {
+    type: Date,
+    required: true
+  },
+  startTime: {
+    type: Date,
+    required: true
+  },
+  endTime: {
+    type: Date,
+    required: true
+  },
+  workOrderStatus: {
+    type: String,
+    enum: ['Pending', 'Running', 'Success', 'Failed', 'N/A'],
+    default: 'Pending'
+  },
+  description: {
+    type: String,
+    default: 'Waiting for SPE Approval'
+  },
+  dmlError: {
+    type: String,
+    default: ''
+  },
+  comment: {
+    type: String,
+    default: '',
+    maxlength: 200
+  },
+  workItems: [WorkItemSchema],
+  regionId: {
+    type: String,
+    required: true,
+    ref: 'Region'
+  },
+  executionTime: {
+    type: Number,
+    default: 0,
+    comment: 'Time taken in seconds'
+  }
+}, { timestamps: true });
+
+// Column Schema (for UI customization)
+const ColumnSchema = new Schema({
+  columnId: {
+    type: String,
+    required: true
+  },
+  visible: {
+    type: Boolean,
+    default: true
+  }
+});
+
+// Layout Template Schema
+const LayoutTemplateSchema = new Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  columns: [ColumnSchema],
+  isSystem: {
+    type: Boolean,
+    default: false
+  }
+});
+
+// User Layout Preferences Schema
+const UserLayoutPreferenceSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    required: true,
+    ref: 'User'
+  },
+  regionId: {
+    type: String,
+    required: true
+  },
+  currentLayoutId: {
+    type: Schema.Types.ObjectId,
+    ref: 'LayoutTemplate'
+  },
+  customColumns: [ColumnSchema]
+}, { timestamps: true });
+
+// Region Schema
+const RegionSchema = new Schema({
+  regionId: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true
+  },
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+});
+
+// User Schema
+const UserSchema = new Schema({
+  username: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true
+  },
+  displayName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  role: {
+    type: String,
+    enum: ['Admin', 'SPE', 'Operator', 'Viewer'],
+    default: 'Viewer'
+  },
+  // Tracking which regions the user has access to
+  regions: [{
+    type: String,
+    ref: 'Region.regionId'
+  }],
+  defaultRegion: {
+    type: String,
+    ref: 'Region.regionId'
+  },
+  lastLogin: {
+    type: Date
+  }
+}, { timestamps: true });
+
+// Metrics & Analytics Schema
+const MetricsSchema = new Schema({
+  regionId: {
+    type: String,
+    required: true,
+    ref: 'Region.regionId'
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  totalWorkOrders: {
+    type: Number,
+    default: 0
+  },
+  pendingWorkOrders: {
+    type: Number,
+    default: 0
+  },
+  approvedWorkOrders: {
+    type: Number,
+    default: 0
+  },
+  rejectedWorkOrders: {
+    type: Number,
+    default: 0
+  },
+  totalAlgorithms: {
+    type: Number,
+    default: 0
+  },
+  approvedAlgorithms: {
+    type: Number,
+    default: 0
+  },
+  deniedAlgorithms: {
+    type: Number,
+    default: 0
+  },
+  avgExecutionTime: {
+    type: Number,
+    default: 0
+  }
+});
+
+// Activity Log Schema
+const ActivityLogSchema = new Schema({
+  userId: {
+    type: Schema.Types.ObjectId,
+    required: true,
+    ref: 'User'
+  },
+  action: {
+    type: String,
+    required: true,
+    enum: [
+      'WorkOrderCreated', 
+      'WorkOrderUpdated', 
+      'AlgorithmApproved', 
+      'AlgorithmDenied',
+      'StatusChanged',
+      'CommentAdded'
+    ]
+  },
+  workOrderId: {
+    type: Schema.Types.ObjectId,
+    ref: 'WorkOrder'
+  },
+  workOrderNumber: {
+    type: Number
+  },
+  algorithmId: {
+    type: Schema.Types.ObjectId
+  },
+  algorithmName: {
+    type: String
+  },
+  previousStatus: {
+    type: String
+  },
+  newStatus: {
+    type: String
+  },
+  comment: {
+    type: String
+  },
+  timestamp: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// Create and export models
+const WorkOrder = mongoose.model('WorkOrder', WorkOrderSchema);
+const LayoutTemplate = mongoose.model('LayoutTemplate', LayoutTemplateSchema);
+const UserLayoutPreference = mongoose.model('UserLayoutPreference', UserLayoutPreferenceSchema);
+const Region = mongoose.model('Region', RegionSchema);
+const User = mongoose.model('User', UserSchema);
+const Metrics = mongoose.model('Metrics', MetricsSchema);
+const ActivityLog = mongoose.model('ActivityLog', ActivityLogSchema);
+
+module.exports = {
+  WorkOrder,
+  LayoutTemplate,
+  UserLayoutPreference,
+  Region,
+  User,
+  Metrics,
+  ActivityLog
+};

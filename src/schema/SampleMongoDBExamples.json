@@ -1,0 +1,333 @@
+// Sample data examples for MongoDB collections
+
+// Import the models
+const { 
+  WorkOrder, 
+  LayoutTemplate, 
+  UserLayoutPreference, 
+  Region,
+  User,
+  Metrics,
+  ActivityLog
+} = require('./models');
+
+// Sample Regions
+const regions = [
+  {
+    regionId: 'ctx',
+    name: 'CTX Region',
+    isActive: true
+  },
+  {
+    regionId: 'nyx',
+    name: 'NYX Region',
+    isActive: true
+  },
+  {
+    regionId: 'rex',
+    name: 'REX Region',
+    isActive: true
+  },
+  {
+    regionId: 'vex',
+    name: 'VEX Region',
+    isActive: true
+  }
+];
+
+// Sample Layout Templates
+const defaultTemplates = [
+  {
+    name: 'Default',
+    isSystem: true,
+    columns: [
+      { columnId: 'checkbox', visible: true },
+      { columnId: 'workOrderNumber', visible: true },
+      { columnId: 'enbID', visible: true },
+      { columnId: 'serviceImpacting', visible: true },
+      { columnId: 'sftpFetchTimestamp', visible: true },
+      { columnId: 'workItems', visible: true },
+      { columnId: 'actions', visible: true },
+      { columnId: 'spe', visible: true },
+      { columnId: 'startTime', visible: true },
+      { columnId: 'endTime', visible: true },
+      { columnId: 'workOrderStatus', visible: true },
+      { columnId: 'description', visible: true },
+      { columnId: 'comment', visible: true }
+    ]
+  },
+  {
+    name: 'Compact',
+    isSystem: true,
+    columns: [
+      { columnId: 'checkbox', visible: true },
+      { columnId: 'workOrderNumber', visible: true },
+      { columnId: 'enbID', visible: true },
+      { columnId: 'serviceImpacting', visible: true },
+      { columnId: 'sftpFetchTimestamp', visible: false },
+      { columnId: 'workItems', visible: false },
+      { columnId: 'actions', visible: true },
+      { columnId: 'spe', visible: true },
+      { columnId: 'startTime', visible: false },
+      { columnId: 'endTime', visible: false },
+      { columnId: 'workOrderStatus', visible: true },
+      { columnId: 'description', visible: false },
+      { columnId: 'comment', visible: true }
+    ]
+  },
+  {
+    name: 'Detailed',
+    isSystem: true,
+    columns: [
+      { columnId: 'checkbox', visible: true },
+      { columnId: 'workOrderNumber', visible: true },
+      { columnId: 'enbID', visible: true },
+      { columnId: 'serviceImpacting', visible: true },
+      { columnId: 'sftpFetchTimestamp', visible: true },
+      { columnId: 'workItems', visible: true },
+      { columnId: 'actions', visible: true },
+      { columnId: 'spe', visible: true },
+      { columnId: 'startTime', visible: true },
+      { columnId: 'endTime', visible: true },
+      { columnId: 'workOrderStatus', visible: true },
+      { columnId: 'description', visible: true },
+      { columnId: 'comment', visible: true }
+    ]
+  }
+];
+
+// Sample Users
+const users = [
+  {
+    username: 'admin1',
+    displayName: 'Admin User',
+    role: 'Admin',
+    regions: ['ctx', 'nyx', 'rex', 'vex'],
+    defaultRegion: 'ctx',
+    lastLogin: new Date()
+  },
+  {
+    username: 'johnsmith',
+    displayName: 'John Smith',
+    role: 'SPE',
+    regions: ['ctx', 'nyx'],
+    defaultRegion: 'ctx',
+    lastLogin: new Date()
+  },
+  {
+    username: 'sarahlee',
+    displayName: 'Sarah Lee',
+    role: 'SPE',
+    regions: ['ctx', 'rex'],
+    defaultRegion: 'ctx',
+    lastLogin: new Date()
+  },
+  {
+    username: 'operatoruser',
+    displayName: 'Operator User',
+    role: 'Operator',
+    regions: ['ctx'],
+    defaultRegion: 'ctx',
+    lastLogin: new Date()
+  }
+];
+
+// Sample Work Orders
+const workOrders = [
+  {
+    workOrderNumber: 1234567,
+    enbID: 137501,
+    serviceImpacting: 'Yes',
+    sftpFetchTimestamp: new Date('2023-03-05T14:30:25'),
+    startTime: new Date('2023-03-06T08:00:00'),
+    endTime: new Date('2023-03-06T10:00:00'),
+    workOrderStatus: 'Pending',
+    description: 'Waiting for SPE Approval',
+    dmlError: '',
+    comment: '',
+    regionId: 'ctx',
+    workItems: [
+      {
+        name: 'Algorithm1',
+        comment: '',
+        spe: '',
+        speDate: null,
+        status: ''
+      },
+      {
+        name: 'Algorithm2',
+        comment: 'Completed on time',
+        spe: 'John Smith',
+        speDate: new Date('2023-03-05T15:42:10'),
+        status: 'Approved'
+      },
+      {
+        name: 'Algorithm3',
+        comment: '',
+        spe: '',
+        speDate: null,
+        status: ''
+      },
+      {
+        name: 'Algorithm4',
+        comment: 'Failed due to API error',
+        spe: 'Sarah Lee',
+        speDate: new Date('2023-03-05T16:30:22'),
+        status: 'Denied'
+      }
+    ]
+  },
+  {
+    workOrderNumber: 1234568,
+    enbID: 137502,
+    serviceImpacting: 'Yes',
+    sftpFetchTimestamp: new Date('2023-03-05T16:15:10'),
+    startTime: new Date('2023-03-07T09:30:00'),
+    endTime: new Date('2023-03-07T11:30:00'),
+    workOrderStatus: 'Success',
+    description: 'WO Executed successfully',
+    dmlError: '',
+    comment: '',
+    regionId: 'ctx',
+    executionTime: 5820, // 1 hour 37 minutes in seconds
+    workItems: [
+      {
+        name: 'Algorithm1',
+        comment: 'Successfully implemented',
+        spe: 'Thomas Anderson',
+        speDate: new Date('2023-03-06T11:15:30'),
+        status: 'Approved'
+      }
+    ]
+  },
+  {
+    workOrderNumber: 1234569,
+    enbID: 137503,
+    serviceImpacting: 'No',
+    sftpFetchTimestamp: new Date('2023-03-05T18:45:33'),
+    startTime: new Date('2023-03-08T14:00:00'),
+    endTime: new Date('2023-03-08T15:00:00'),
+    workOrderStatus: 'N/A',
+    description: 'All Algorithms Denied By SPE',
+    dmlError: '',
+    comment: '',
+    regionId: 'ctx',
+    workItems: [
+      {
+        name: 'Algorithm3',
+        comment: 'Version mismatch',
+        spe: 'Melissa Garcia',
+        speDate: new Date('2023-03-07T09:22:15'),
+        status: 'Denied'
+      },
+      {
+        name: 'Algorithm4',
+        comment: 'Resource allocation error',
+        spe: 'Kevin Taylor',
+        speDate: new Date('2023-03-07T10:45:33'),
+        status: 'Denied'
+      }
+    ]
+  }
+];
+
+// Sample User Layout Preferences (assuming user IDs are already created)
+const userLayoutPreferences = [
+  {
+    userId: 'user_id_here', // This would be a reference to an actual User document
+    regionId: 'ctx',
+    currentLayoutId: 'layout_template_id_here', // This would be a reference to a LayoutTemplate document
+    customColumns: [
+      { columnId: 'checkbox', visible: true },
+      { columnId: 'workOrderNumber', visible: true },
+      { columnId: 'enbID', visible: true },
+      { columnId: 'serviceImpacting', visible: true },
+      { columnId: 'sftpFetchTimestamp', visible: false },
+      { columnId: 'workItems', visible: true },
+      { columnId: 'actions', visible: true },
+      { columnId: 'spe', visible: true },
+      { columnId: 'startTime', visible: false },
+      { columnId: 'endTime', visible: false },
+      { columnId: 'workOrderStatus', visible: true },
+      { columnId: 'description', visible: true },
+      { columnId: 'comment', visible: true }
+    ]
+  }
+];
+
+// Sample Metrics Data
+const metricsData = [
+  {
+    regionId: 'ctx',
+    date: new Date('2023-03-05'),
+    totalWorkOrders: 10,
+    pendingWorkOrders: 4,
+    approvedWorkOrders: 5,
+    rejectedWorkOrders: 1,
+    totalAlgorithms: 32,
+    approvedAlgorithms: 26,
+    deniedAlgorithms: 6,
+    avgExecutionTime: 1250 // in seconds
+  },
+  {
+    regionId: 'ctx',
+    date: new Date('2023-03-06'),
+    totalWorkOrders: 8,
+    pendingWorkOrders: 3,
+    approvedWorkOrders: 4,
+    rejectedWorkOrders: 1,
+    totalAlgorithms: 24,
+    approvedAlgorithms: 20,
+    deniedAlgorithms: 4,
+    avgExecutionTime: 1320 // in seconds
+  }
+];
+
+// Sample Activity Logs
+const activityLogs = [
+  {
+    userId: 'user_id_here', // Reference to an actual User document
+    action: 'AlgorithmApproved',
+    workOrderId: 'work_order_id_here', // Reference to a WorkOrder document
+    workOrderNumber: 1234567,
+    algorithmId: 'algorithm_id_here',
+    algorithmName: 'Algorithm2',
+    previousStatus: '',
+    newStatus: 'Approved',
+    comment: 'Completed on time',
+    timestamp: new Date('2023-03-05T15:42:10')
+  },
+  {
+    userId: 'user_id_here', // Reference to an actual User document
+    action: 'AlgorithmDenied',
+    workOrderId: 'work_order_id_here', // Reference to a WorkOrder document
+    workOrderNumber: 1234567,
+    algorithmId: 'algorithm_id_here',
+    algorithmName: 'Algorithm4',
+    previousStatus: '',
+    newStatus: 'Denied',
+    comment: 'Failed due to API error',
+    timestamp: new Date('2023-03-05T16:30:22')
+  },
+  {
+    userId: 'user_id_here', // Reference to an actual User document
+    action: 'StatusChanged',
+    workOrderId: 'work_order_id_here', // Reference to a WorkOrder document
+    workOrderNumber: 1234568,
+    previousStatus: 'Pending',
+    newStatus: 'Success',
+    comment: 'WO Executed successfully',
+    timestamp: new Date('2023-03-07T11:30:00')
+  }
+];
+
+// This is just example data - in a real application you would use these to seed your database
+module.exports = {
+  regions,
+  defaultTemplates,
+  users,
+  workOrders,
+  userLayoutPreferences,
+  metricsData,
+  activityLogs
+};
